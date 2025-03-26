@@ -114,6 +114,7 @@ class CalenderSync:
 
         # delete removed events
         for pco_id in set(self.existing_events.keys()) - current_pco_ids:
+            event_id = self.existing_events[pco_id]
             self._delete_event(self.existing_events[pco_id])
             delete_count += 1
 
@@ -159,11 +160,14 @@ class CalenderSync:
     def _delete_event(self, event_id):
         # delete Outlook event
         response = requests.delete(
-            f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events/{event_id}'
+            f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events/{event_id}',
             headers=self.headers
         )
         if response.status_code == 204:
-            del self.existing_events[pco_id]
+            for pco_id, e_id in list(self.existing_events.items()):
+                if e_id == event_id:
+                    del self.existing_events[pco_id]
+                    break
 
     def sync(self):
         # main sync operations
