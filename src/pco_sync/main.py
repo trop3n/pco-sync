@@ -18,7 +18,7 @@ MICROSOFT_CLIENT_SECRET = os.getenv('MICROSOFT_CLIENT_SECRET')
 SHARED_CALENDER_ID = os.getenv('SHARED_CALENDER_ID')
 SYNC_INTERVAL_MINUTES = 60
 
-class CalenderSync:
+class SafeCalenderSync:
     def __init__(self):
         self.pco_auth = (PCO_APP_ID, PCO_SECRET)
         self.graph_token = self._get_microsoft_token()
@@ -48,30 +48,13 @@ class CalenderSync:
         }
 
         response = requests.get(url, auth=self.pco_auth, params=params)
-        events = []
-
-        for plan in response.json().get('data', []):
-            for member in plan.get('relationships', {}).get('team_members', {}).get('data', []):
-                event = {
-                    'singleValueExtendedProperties': [{
-                        'id': 'String' {66f5a359-4659-4830-9070-000000000000} Name PCO_ID',
-                        'value': f'"plan['id']}|{membder['id']}"
-                    }],
-                    'subject': f"Operator Shift: {member.get('attributes', {}).get('name')}",
-                    'start': {
-                        'dateTime': plan['attributes']['starts_at'],
-                        'timeZone': 'America/Chicago'
-                    },
-                    'end': {
-                        'dateTime': plan['attributes']['ends_at'],
-                        'timeZone': 'America/Chicago'
-                    },
-                    'body': {
-                        'content': f"Service: {plan['attributes']['title']}\nPerson: {member['attributes']['name']}"
-                    }
-                }
-                events.append(event)
-            return events
+        pco_events = []
+        for event in pco_events:
+            event['singleValueExtendedProperties'] = [{
+                'id': 'String {66f5a359-4659-4830-9070-000000000000} Name PCO_ID',
+                'value': f"{plan_id}|{member_id}"
+            }]
+        return pco_events
         
     def _get_existing_outlook_events(self):
         """Get existing events with PCO identifiers"""
@@ -137,39 +120,34 @@ class CalenderSync:
     def _update_event(self, event_id, new_data):
         requests.patch(
             f'https://graph.microsoft.com/v1.0/users/{self.calendar_id}/events/{event_id}',
-            headers=self.headers
+            headers=self.headers,
+            json={
+                'start': new_data['start'],
+                'end': new_data['end']
+                'subject': new_data['subject'],
+                'body': new_data.get('body', {})
+            }
         )
-
-    def _sync_to_outlook(self, events):
-        # clear existing events (optional - be careful!)
-        # consider maintaining event IDs for updates instead
-
-        # add new events
-        for event in events:
-            response = requests.post(
-                f'https://graph.microsoft.com/v1.0/users/{SHARED_CALENDER_ID}/events',
-                headers=self.headers,
-                json=event
-            )
-            if response.status_code not in [200, 201]:
-                print(f"Error creating event: {response.text}")
 
     def sync(self):
         print(f"Starting sync at {datetime.now()}")
         try:
-            events = self._get_pco_operator_events()
-            self._sync_to_outlook(events)
-            print(f"Synced {len(events)} events")
+            events = self._get_pco_events()
+            self._sync_events(pco_events)
+            print(f"Safe sync completed successfully")
         except Exception as e:
             print(f"Sync failed: {str(e)}")
+        finally:
+            # refresh existing events for next sync
+            self.existing_events = self._get_existing_outlook_events()
 
     def start_scheduler(self):
-        schedule.every(SYNC_INTERVAL_MINUTES).minutes.do(self.sync)
+        schedule.every(int(os.getenv('SYNC_INTERVAL_MINUTES', 60))).minutes.do(self.sync)
         while True:
             schedule.run_pending()
             time.sleep(1)
 
 if __name__ == 'main':
-    syncer = CalenderSync()
+    syncer = SafeCalenderSync()
     syncer.sync() # Initial sync
     syncer.start_scheduler()
