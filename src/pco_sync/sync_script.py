@@ -156,4 +156,32 @@ class CalenderSync:
             }
         )
     
-    def 
+    def _delete_event(self, event_id):
+        # delete Outlook event
+        response = requests.delete(
+            f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events/{event_id}'
+            headers=self.headers
+        )
+        if response.status_code == 204:
+            del self.existing_events[pco_id]
+
+    def sync(self):
+        # main sync operations
+        print(f"Starting sync at {datetime.now()}")
+        try:
+            pco_events = self._get_pco_events()
+            self._sync_events(pco_events)
+            print(f"Sync complete. Total PCO events: {len(pco_events)}")
+        except Exception as e:
+            print(f"Sync failed: {str(e)}")
+        finally:
+            self.existing_events = self._get_existing_outlook_events()
+
+    def start_scheduler(self):
+        # start scheduled syncs
+        schedule.every(int(os.getenv('SYNC_INTERVAL_MINUTES', 60))).minutes.do(self.sync)
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+            
+    
