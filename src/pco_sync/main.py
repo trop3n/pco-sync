@@ -26,6 +26,9 @@ class CalenderSync:
             'Authorization': f'Bearer {self.graph.token}',
             'Content-Type': 'application/json'
         }
+        self.calendar_id = os.getenv('SHARED_CALENDER_ID')
+        self.existing_events = self._get_existing_outlook_events()
+
     def _get_microsoft_token(self):
         authority = f'https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}'
         app = ConfidentialClientApplication(
@@ -33,10 +36,10 @@ class CalenderSync:
             client_credential=MICROSOFT_CLIENT_SECRET,
             authority=authority
         )
-        result = app.acquire_token_for_client(scopes=['https://graph.microsoft.com/.default'])
-        return result['access_token']
+        return app.acquire_token_for_client(scopes=['https://graph.microsoft.com/.default'])['access_token']
     
-    def _get_pco_operator_events(self):
+    
+    def _get_pco_events(self):
         url = 'https://api.planningcenteronline.com/services/v2/service_types/.../plans'
         params = {
             'include': 'team_members',
@@ -50,6 +53,10 @@ class CalenderSync:
         for plan in response.json().get('data', []):
             for member in plan.get('relationships', {}).get('team_members', {}).get('data', []):
                 event = {
+                    'singleValueExtendedProperties': [{
+                        'id': 'String' {66f5a359-4659-4830-9070-000000000000} Name PCO_ID',
+                        'value': f'"plan['id']}|{membder['id']}"
+                    }],
                     'subject': f"Operator Shift: {member.get('attributes', {}).get('name')}",
                     'start': {
                         'dateTime': plan['attributes']['starts_at'],
@@ -66,34 +73,101 @@ class CalenderSync:
                 events.append(event)
             return events
         
-        def _sync_to_outlook(self, events):
-            # clear existing events (optional - be careful!)
-            # consider maintaining event IDs for updates instead
+    def _get_existing_outlook_events(self):
+        """Get existing events with PCO identifiers"""
+        events = {}
+        url = f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events'
+        params = {
+            '$select': 'id,subject,start,end',
+            '$expand': 'singleValueExtendedProperties($filter=id eq \'String {66f5a359-4659-4830-9070-000000000000} Name PCO_ID\')'
+        }
 
-            # add new events
-            for event in events:
-                response = requests.post(
-                    f'https://graph.microsoft.com/v1.0/users/{SHARED_CALENDER_ID}/events',
-                    headers=self.headers,
-                    json=event
-                )
-                if response.status_code not in [200, 201]:
-                    print(f"Error creating event: {response.text}")
+        while url:
+            response = requests.get(url, headers=self.headers, params=params)
+            for event in response.json().get('value', []):
+                for prop in event.get('singleValueExtendedProperties, []'):
+                    if prop['id'] == 'String {66f5a359-4659-4830-9070-000000000000} Name PCO_ID':
+                        events[prop['value']] = event['id']
+            url = response.json().get('@odata.nextLink')
+        return events
+        
+    def _sync_events(self, pco_events):
+        """Safe sync with update/create operations"""
+        new_counts = 0
+        update_count = 0
 
-        def sync(self):
-            print(f"Starting sync at {datetime.now()}")
-            try:
-                events = self._get_pco_operator_events()
-                self._sync_to_outlook(events)
-                print(f"Synced {len(events)} events")
-            except Exception as e:
-                print(f"Sync failed: {str(e)}")
+        for event in pco_events:
+            pco_id = next(p['value'] for p in event['singleValueExtendedProperties'])
+            if pco_id in self.existing_events:
+                # update existing event if needed
+                if self._needs_update(self.existing_events[pco_id], event):
+                    self._update_event(self.existing_events[pco_id], event)
+                    update_count += 1
+            else:
+                # Create new event
+                self._create_event(event)
+                new_count += 1
 
-        def start_scheduler(self):
-            schedule.every(SYNC_INTERVAL_MINUTES).minutes.do(self.sync)
-            while True:
-                schedule.run_pending()
-                time.sleep(1)
+        print(f"Added {new_count} new events, updated {update_count} existing events")
+
+    def _needs_update(self, event_id, new_event):
+        """Check if existing event needs updating"""
+        existing_event = requests.get(
+            f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events/{event_id}',
+            headers=self.headers
+        ).json()
+
+        return(
+            existing_event['start']['dateTime'] != new_event['start']['dateTime'] or
+            existing_event['end']['dateTime'] != new_event['end']['dateTime'] or
+            existing_event['subject'] != new_event['subject']
+        )
+    
+    def _create_event(self, event):
+        response = requests.post(
+            f'https://graph.microsoft.com/v1.0/users/{self.calendar_id}/events',
+            headers=self.headers,
+            json=event
+        )
+        if response.status_code in [200, 201]:
+            self.existing_events[
+                next(p['value'] for p in event['singleValueExtendedProperties'])
+            ] = response.json()['id']
+
+    def _update_event(self, event_id, new_data):
+        requests.patch(
+            f'https://graph.microsoft.com/v1.0/users/{self.calendar_id}/events/{event_id}',
+            headers=self.headers
+        )
+
+    def _sync_to_outlook(self, events):
+        # clear existing events (optional - be careful!)
+        # consider maintaining event IDs for updates instead
+
+        # add new events
+        for event in events:
+            response = requests.post(
+                f'https://graph.microsoft.com/v1.0/users/{SHARED_CALENDER_ID}/events',
+                headers=self.headers,
+                json=event
+            )
+            if response.status_code not in [200, 201]:
+                print(f"Error creating event: {response.text}")
+
+    def sync(self):
+        print(f"Starting sync at {datetime.now()}")
+        try:
+            events = self._get_pco_operator_events()
+            self._sync_to_outlook(events)
+            print(f"Synced {len(events)} events")
+        except Exception as e:
+            print(f"Sync failed: {str(e)}")
+
+    def start_scheduler(self):
+        schedule.every(SYNC_INTERVAL_MINUTES).minutes.do(self.sync)
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
 
 if __name__ == 'main':
     syncer = CalenderSync()
