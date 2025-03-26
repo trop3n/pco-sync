@@ -88,3 +88,14 @@ class CalenderSync:
                 print(f"Synced {len(events)} events")
             except Exception as e:
                 print(f"Sync failed: {str(e)}")
+
+        def start_scheduler(self):
+            schedule.every(SYNC_INTERVAL_MINUTES).minutes.do(self.sync)
+            while True:
+                schedule.run_pending()
+                time.sleep(1)
+
+if __name__ == 'main':
+    syncer = CalenderSync()
+    syncer.sync() # Initial sync
+    syncer.start_scheduler()
