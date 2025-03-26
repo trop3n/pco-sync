@@ -73,11 +73,87 @@ class CalenderSync:
                 })
             return events
         
-        def _get_existing_outlook_events(self):
-            # retrieve existing outlook events with PCO identifiers
-            events = {}
-            url = f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events'
-            params = {
-                '$select': 'id',
-                '$expand': 'singleValueExtendedProperties($filter=id eq \'String {66f5a359-4659-4830-9070-000000000000} Name PCO_ID\')'
+    def _get_existing_outlook_events(self):
+        # retrieve existing outlook events with PCO identifiers
+        events = {}
+        url = f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events'
+        params = {
+            '$select': 'id',
+            '$expand': 'singleValueExtendedProperties($filter=id eq \'String {66f5a359-4659-4830-9070-000000000000} Name PCO_ID\')'
+        }
+
+        while url:
+            response = requests.get(url, headers=self.headers, params=params)
+            for event in response.json().get('value', []):
+                for prop in event.get('singleValueExtendedProperties', []):
+                    if prop['id'] == 'String {66f5a359-4659-4830-9070-000000000000} Name PCO_ID':
+                        events[prop['value']] = event['id']
+            url = response.json().get('@odata.nextLink')
+        return events
+    
+    def _sync_events(self, pco_events):
+        # perform full sync with create/update/delete operations
+        current_pco_ids = set()
+        new_count = 0
+        update_count = 0
+        delete_count = 0
+
+        # process PCO events
+        for event in pco_events:
+            pco_id = next(p['value'] for p in event['singleValueExtendedProperties'])
+            current_pco_ids.add(pco_id)
+
+            if pco_id in self.existing_events:
+                if self._needs_update(self.existing_events[pco_id], event):
+                    self._update_event(self.existing_events[pco_id], event)
+                    update_count += 1
+            else:
+                # create new event
+                self._create_event(event)
+                new_count += 1
+
+        # delete removed events
+        for pco_id in set(self.existing_events.keys()) - current_pco_ids:
+            self._delete_event(self.existing_events[pco_id])
+            delete_count += 1
+
+        print(f"Created {new_count}, updated {update_count}, deleted {delete_count} events")
+
+    def _needs_update(self, event_id, new_event):
+        # check if an event needs updating
+        existing_event = requests.get(
+            f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events/{event_id}', headers=self.headers
+        ).json()
+
+        return (
+            existing_event['start']['dateTime'] != new_event['start']['dateTime']
+            or existing_event['end']['dateTime'] != new_event['end']['dateTime']
+            or existing_event['subject'] != new_event['subject']
+        )
+    
+    def _create_event(self, event):
+        # create new Outlook event
+        response = requests.post(
+            f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events',
+            headers=self.headers,
+            json=event
+        )
+        if response.status_code in [200, 201]:
+            self.existing_events[
+                next(p['value'] for p in event['singleValueExtendedProperties'])
+            ] = response.json()['id']
+
+    def _update_event(self, event_id, new_data):
+        # update existing outlook event
+        requests.patch(
+            f'https://graph.microsoft.com/v1.0/users/{self.calender_id}/events/{event_id}',
+            headers=self.headers,
+            json={
+                'start': new_data['start'],
+                'end': new_data['end'],
+                'subject': new_data['subject'],
+                'body': new_data.get('body', {})
             }
+        )
+    
+    def 
