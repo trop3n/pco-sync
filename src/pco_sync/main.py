@@ -40,7 +40,7 @@ class CalenderSync:
         url = 'https://api.planningcenteronline.com/services/v2/service_types/.../plans'
         params = {
             'include': 'team_members',
-            'where[team_name]': 'Operator'
+            'where[team_name]': 'Operator',
             'per_page': 100
         }
 
@@ -66,4 +66,25 @@ class CalenderSync:
                 events.append(event)
             return events
         
-        
+        def _sync_to_outlook(self, events):
+            # clear existing events (optional - be careful!)
+            # consider maintaining event IDs for updates instead
+
+            # add new events
+            for event in events:
+                response = requests.post(
+                    f'https://graph.microsoft.com/v1.0/users/{SHARED_CALENDER_ID}/events',
+                    headers=self.headers,
+                    json=event
+                )
+                if response.status_code not in [200, 201]:
+                    print(f"Error creating event: {response.text}")
+
+        def sync(self):
+            print(f"Starting sync at {datetime.now()}")
+            try:
+                events = self._get_pco_operator_events()
+                self._sync_to_outlook(events)
+                print(f"Synced {len(events)} events")
+            except Exception as e:
+                print(f"Sync failed: {str(e)}")
